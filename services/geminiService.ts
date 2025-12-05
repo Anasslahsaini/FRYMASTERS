@@ -1,33 +1,31 @@
 import { Recipe } from "../types";
 
-// User provided Hugging Face API Key
-// Note: In a production environment, this should be in process.env
+// Using the provided Hugging Face API Key
 const HF_API_KEY = "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";
-// Using Mistral-7B-Instruct-v0.2 as it follows formatting instructions very well
+// Using Mistral-7B-Instruct because it is excellent at following JSON formatting instructions
 const HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2";
 
 export const generateRecipe = async (ingredients: string): Promise<Recipe | null> => {
   if (!ingredients) return null;
 
   try {
-    // Constructing a prompt specifically for Mistral Instruct
-    const prompt = `<s>[INST] You are an expert chef specializing in Air Fryer recipes.
-    Create a delicious, healthy air fryer recipe using these ingredients: ${ingredients}.
-    Focus on simple preparation and crisp texture.
-
-    You must output ONLY a valid JSON object. 
-    Do not include markdown formatting (like \`\`\`json), backticks, or introductory text.
+    // 1. Construct a strict prompt for the Instruct model
+    const prompt = `<s>[INST] You are an expert Air Fryer chef. 
+    Create a detailed recipe using these ingredients: ${ingredients}.
     
-    The JSON schema must be exactly:
+    You must output ONLY a valid JSON object. Do not add intro text, markdown formatting, or backticks.
+    
+    The JSON structure must be exactly this:
     {
-      "title": "Creative Dish Name",
-      "ingredients": ["quantity item", "quantity item"],
-      "instructions": ["Step 1...", "Step 2..."],
+      "title": "Name of the dish",
+      "ingredients": ["qty item", "qty item"],
+      "instructions": ["Step 1", "Step 2", "Step 3"],
       "cookingTime": "e.g. 15 mins",
       "difficulty": "Easy" or "Medium"
     }
     [/INST]`;
 
+    // 2. Call Hugging Face API
     const response = await fetch(HF_API_URL, {
       method: "POST",
       headers: {
@@ -37,46 +35,47 @@ export const generateRecipe = async (ingredients: string): Promise<Recipe | null
       body: JSON.stringify({
         inputs: prompt,
         parameters: {
-          max_new_tokens: 1000, // Ensure enough tokens for the full recipe
-          return_full_text: false, // We only want the generated part
-          temperature: 0.7, // Creativity balance
+          max_new_tokens: 1024,
+          return_full_text: false, // Only return the generated recipe, not the prompt
+          temperature: 0.7,
           do_sample: true,
         },
       }),
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error("HF API Error:", errText);
       throw new Error(`Hugging Face API Error: ${response.status} ${response.statusText}`);
     }
 
     const result = await response.json();
     
-    // HF Inference API returns an array: [{ generated_text: "..." }]
+    // 3. Extract the generated text safely
     let text = "";
     if (Array.isArray(result) && result.length > 0) {
-        text = result[0]?.generated_text || "";
+      text = result[0].generated_text;
     } else if (typeof result === 'object' && result.generated_text) {
-        text = result.generated_text;
+      text = result.generated_text;
     }
 
-    // cleaning logic to extract JSON if the model chats
-    const jsonStartIndex = text.indexOf('{');
-    const jsonEndIndex = text.lastIndexOf('}');
+    // 4. Clean the output to ensure valid JSON
+    // Remove markdown code blocks if the model adds them (e.g. ```json ... ```)
+    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
-    if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
-      text = text.substring(jsonStartIndex, jsonEndIndex + 1);
+    // Extract content between the first { and the last } to ignore any chatting before/after
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start !== -1 && end !== -1) {
+      text = text.substring(start, end + 1);
     } else {
-        console.warn("Could not find JSON brackets in response, attempting cleanup");
-        // Fallback cleanup
-        text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      throw new Error("Model did not return a valid JSON object");
     }
 
+    // 5. Parse and return
     return JSON.parse(text) as Recipe;
 
   } catch (error) {
-    console.error("Error generating recipe with Hugging Face:", error);
+    console.error("Recipe generation error:", error);
     throw error;
   }
 };
