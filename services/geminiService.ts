@@ -45,8 +45,12 @@ export const generateRecipe = async (ingredients: string): Promise<Recipe | null
       }
     });
 
-    if (response.text) {
-      return JSON.parse(response.text) as Recipe;
+    const text = response.text;
+    if (text) {
+      // Clean up potential markdown formatting which often breaks JSON.parse
+      // This removes ```json at the start and ``` at the end
+      const cleanedText = text.replace(/```json\s*|```/g, "").trim();
+      return JSON.parse(cleanedText) as Recipe;
     }
     return null;
 
